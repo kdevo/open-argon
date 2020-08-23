@@ -1,0 +1,15 @@
+[Unit]
+Description=Open Argon Daemon/Driver for fan and button control
+After=multi-user.target
+StartLimitInterval=30
+StartLimitBurst=3
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+;RemainAfterExit=true
+ExecStart=/home/pi/.local/bin/argon daemon
+
+[Install]
+WantedBy=multi-user.target
