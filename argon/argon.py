@@ -103,9 +103,10 @@ class Argon:
                 util.success("Nice, the button works fine.")
             else:
                 util.error("Something strange happened - if it wasn't you, I received a ghost touch.")
-                click.echo(
-                    "This can have multiple causes: Additional hardware attached that interferes with the case, wrong assembly etc.")
-                click.echo("In the latter case, compare your assembly with https://github.com/pyotek/open-argon#fan")
+                click.echo("This can have multiple causes: "
+                           "Additional hardware attached that interferes with the case, wrong assembly etc.")
+                click.echo("In the latter case, compare your assembly with "
+                           "https://github.com/pyotek/open-argon#overview")
                 errors += 1
 
             click.echo()
@@ -113,8 +114,7 @@ class Argon:
             click.pause()
             with click.progressbar(range(0, 105, 5),
                                    fill_char='█', empty_char=' ', show_eta=False, show_percent=False,
-                                   item_show_func=lambda
-                                           s: f"{self._io.guess_rpm(s)} rpm @ {util.get_temp(as_str=True)}"
+                                   item_show_func=lambda s: f"{self._io.guess_rpm(s)} rpm"
                                    if s else 'N/A rpm') as bar:
                 for p in bar:
                     self._io.set_fan_speed(p, debug=False)
@@ -131,6 +131,16 @@ class Argon:
 
         if sw_check:
             util.info("Let's check the software side now!")
+            try:
+                temp = util.get_temp()
+                util.success(f"Current temperature: {temp}")
+            except:
+                logging.exception("Unable to get temperature via 'vcgencmd' tool")
+                util.error("Could not get the temperature.")
+                # TODO(kdevo): Automatize adding user to video group
+                click.echo("Tip: Ensure that the current user belongs to the 'video' group!")
+                errors += 1
+
             if Path(self.SYSTEMCTL_PATH).joinpath(f'{self.DAEMON_NAME}').exists() \
                     and Path(self.SYSTEMCTL_SHUTDOWN_DROPIN).joinpath(f'{self.DAEMON_NAME}-poweroff.sh').exists():
                 util.error("Some necessary files for the daemon are missing. Consider to re-run the installer!")
@@ -165,19 +175,25 @@ class Argon:
     def daemon(self, fan_profile=None, button_profile=None):
         self._io.set_power_mode(distutils.util.strtobool(self._cfg['Settings']['power_mode_always_on']))
         running = True
-        if self.service_status():
+        if self.service_status() == 0:
             logging.warning("Another 'argond' daemon is already running via systemd. "
-                            "Running two instances simultaneously is not recommended.")
+                            "Running two instances simultaneously is only recommended for testing purposes.")
+
+        def status_signal_received(signum, frame):
+            logging.warning(f"SIGUSR1 #{signum} received. Sending status.")
+            # TODO(kdevo)
+
 
         def shutdown_signal_received(signum, frame):
-            logging.warning(f"SIGUSR2 {signum} received. Preparing for shutdown.")
+            logging.warning(f"SIGUSR2 #{signum} received. Preparing for shutdown.")
             nonlocal running
             running = False
             self._io.notify_shutdown()
 
-        # Shutdown can also be signaled with SIGUSR2 (e.g. `systemctl kill -s SIGUSR1 argond`),
-        # but because the script already received SIGTERM, we cannot handle it properly anymore:
+        # TODO(kdevo): A future shutdown can also be signaled with SIGUSR2 (e.g. `systemctl kill -s SIGUSR1 argond`),
+        #   but because usually the systemd shutdown script is installed, this does not have any effect.
         signal.signal(signal.SIGUSR2, shutdown_signal_received)
+        signal.signal(signal.SIGUSR1, status_signal_received)
         if os.getuid() != 0:
             logging.warning("Daemon not started as root. Will probably not be able to shutdown.")
         if not fan_profile:
@@ -185,28 +201,44 @@ class Argon:
         if not button_profile:
             button_profile = self._cfg['Settings']['button_profile']
         logging.info("Running in daemon/driver mode.")
-        logging.debug(f"Apply button profile: {button_profile}")
+        logging.debug(f"Button profile: {button_profile}")
         self._io.register_callback(lambda t: self.handle_button(button_profile, t))
 
-        logging.info(f"Apply fan profile: {fan_profile}")
-        self.set_fan(0)
+        logging.info(f"Fan profile: {fan_profile}")
         check_interval = float(self._cfg['Settings']['temp_check_interval'])
-        # Sorting descending ensures that the correct fan speed is set immediately instead of step-wise:
+        # Sorting descending ensures that...
+        #   a) items have the an order
+        #   b) the correct fan speed is set immediately instead of step-wise
         temps = sorted([int(t) for t in self._cfg[fan_profile]], reverse=True)
-        old_target_temp = None
+        # TODO(kdevo): Refactor to separate fan class:
+        speed = None
+        logging.debug(f"Sorted temperatures of the profile: {temps}")
+
+        # TODO(kdevo): Useful for possible tests:
+        # def fake_temp():
+        #     return randint(40, 100)
+        # util.get_temp = fake_temp
+
         while running:
             cur_temp = util.get_temp()
             logging.debug(f"Got current temperature: {cur_temp}°C")
             for target_temp in temps:
                 if cur_temp >= target_temp:
-                    if old_target_temp == target_temp:
+                    new_speed = int(self._cfg[fan_profile][str(target_temp)])
+                    if speed == new_speed:
+                        logging.debug(f"Fan already running at specified speed {new_speed}%, no need to set it again.")
                         break
-                    fan_speed = int(self._cfg[fan_profile][str(target_temp)])
-                    logging.info(f"Target temperature ({target_temp}°C) by current temperature ({cur_temp}°C) "
-                                 f"exceeded: Setting fan speed to {fan_speed}%")
-                    self._io.set_fan_speed(fan_speed)
-                    old_target_temp = target_temp
+                    logging.info(f"Set fan speed to {new_speed}%. "
+                                 f"Target temperature exceeded: {cur_temp}°C >= {target_temp}°C")
+                    self._io.set_fan_speed(new_speed)
+                    speed = new_speed
                     break
+            else:
+                if speed > 0:
+                    logging.info("No given temperature has been exceeded. Turning off fan.")
+                    self.set_fan(0)
+                    speed = 0
+
             logging.debug(f"Sleeping {check_interval} seconds...")
             time.sleep(check_interval)
 
