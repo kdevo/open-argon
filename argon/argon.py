@@ -133,7 +133,7 @@ class Argon:
             util.info("Let's check the software side now!")
             try:
                 temp = util.get_temp()
-                util.success(f"Current temperature: {temp}")
+                util.success(f"Got current temperature: {temp}°C")
             except:
                 logging.exception("Unable to get temperature via 'vcgencmd' tool")
                 util.error("Could not get the temperature.")
@@ -175,9 +175,9 @@ class Argon:
     def daemon(self, fan_profile=None, button_profile=None):
         self._io.set_power_mode(distutils.util.strtobool(self._cfg['Settings']['power_mode_always_on']))
         running = True
-        if self.service_status() == 0:
-            logging.warning("Another 'argond' daemon is already running via systemd. "
-                            "Running two instances simultaneously is only recommended for testing purposes.")
+        # if self.service_status() == 0:
+        #     logging.warning("Another 'argond' daemon is already running via systemd. "
+        #                     "Running two instances simultaneously is only recommended for testing purposes.")
 
         def status_signal_received(signum, frame):
             logging.warning(f"SIGUSR1 #{signum} received. Sending status.")
@@ -211,7 +211,7 @@ class Argon:
         #   b) the correct fan speed is set immediately instead of step-wise
         temps = sorted([int(t) for t in self._cfg[fan_profile]], reverse=True)
         # TODO(kdevo): Refactor to separate fan class:
-        speed = None
+        speed = 0
         logging.debug(f"Sorted temperatures of the profile: {temps}")
 
         # TODO(kdevo): Useful for possible tests:
